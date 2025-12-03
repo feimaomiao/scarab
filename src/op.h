@@ -36,6 +36,7 @@
 #include "inst_info.h"
 #include "op_info.h"
 #include "table_info.h"
+#include "bp/bp_perceptron.h"
 
 // forward declaration of FT
 typedef struct FT FT;
@@ -153,6 +154,10 @@ struct Op_struct {
 
   int32 perceptron_output;
   int32 conf_perceptron_output;  // confidece perceptron
+
+  // Branch predictor perceptron state
+  Perceptron_State perceptron_state;
+
   // {{{ state and event cycle counters
   Op_State state;        // the state of the op in the datapath
   Counter fetch_cycle;   // cycle an individual instruction is fetched

@@ -48,6 +48,7 @@
 #include "bp/gshare.h"
 #include "bp/hybridgp.h"
 #include "bp/tagescl.h"
+#include "bp/bp_perceptron.h"
 #include "frontend/pin_trace_fe.h"
 #include "isa/isa_macros.h"
 #include "libs/cache_lib.h"

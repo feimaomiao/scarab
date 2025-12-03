@@ -68,3 +68,4 @@ test_string_pinball/
 .vscode/*
 *.code-workspace
 .env
+.DS_Store

@@ -163,3 +163,10 @@ DEF_PARAM(  perceptron_conf_his_both_length  , PERCEPTRON_CONF_HIS_BOTH_LENGTH  
 
 DEF_PARAM(  mtage_realistic_sc_40k  , MTAGE_REALISTIC_SC_40K   , Flag    , Flag        , FALSE     ,           )
 DEF_PARAM(  mtage_realistic_sc_100k  , MTAGE_REALISTIC_SC_100K   , Flag    , Flag        , FALSE     ,           )
+
+///////////////////////////////////////////////////////////////////////////
+// Perceptron Branch Predictor
+
+DEF_PARAM(  perceptron_hist_len    , PERCEPTRON_HIST_LEN    , uns     , uns        , 28         ,        ) /* History length (number of history bits) */
+DEF_PARAM(  perceptron_table_bits  , PERCEPTRON_TABLE_BITS  , uns     , uns        , 7          ,        ) /* Log2 of number of perceptrons in table */
+DEF_PARAM(  bp_perceptron_on       , BP_PERCEPTRON_ON       , Flag    , Flag       , FALSE      ,        ) /* Enable perceptron branch predictor */
