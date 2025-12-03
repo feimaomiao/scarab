@@ -37,9 +37,6 @@
 #include "op_info.h"
 #include "table_info.h"
 
-struct Perceptron_State_struct;
-typedef struct Perceptron_State_struct Perceptron_State;
-
 // forward declaration of FT
 typedef struct FT FT;
 
@@ -157,8 +154,10 @@ struct Op_struct {
   int32 perceptron_output;
   int32 conf_perceptron_output;  // confidece perceptron
 
-  // Branch predictor perceptron state
-  Perceptron_State perceptron_state;
+  // Branch predictor perceptron state (stored inline to avoid incomplete type)
+  int32  bp_perceptron_y_out;    /* Output value for training */
+  uns64  bp_perceptron_ghist;    /* Global history at prediction */
+  uns32  bp_perceptron_index;    /* Table index used */
 
   // {{{ state and event cycle counters
   Op_State state;        // the state of the op in the datapath

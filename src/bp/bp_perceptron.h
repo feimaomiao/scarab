@@ -34,12 +34,14 @@ typedef struct Perceptron_struct {
     Perceptron_Weight weights[PERCEPTRON_MAX_HIST_LEN + 1];  /* +1 for bias w0 */
 } Perceptron;
 
-/* State saved per-branch for training and recovery */
-typedef struct Perceptron_State_struct {
-    int32  y_out;       /* Output value (for training decision) */
-    uns64  ghist;       /* Global history at prediction time */
-    uns32  index;       /* Table index used */
-} Perceptron_State;
+/* Global predictor state */
+typedef struct Bp_Perceptron_struct {
+    Perceptron* table;       /* Array of perceptrons */
+    uns32       num_entries; /* Number of perceptrons in table */
+    uns32       hist_len;    /* History length used */
+    int32       threshold;   /* Training threshold */
+    uns64       ghist;       /* Global history register */
+} Bp_Perceptron;
 
 /************************************************************
  * Function Prototypes - Scarab BP Interface

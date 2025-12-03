@@ -18,29 +18,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <assert.h>
-#include <stdint.h>
+#include <math.h>
 
-#define SCARAB_TYPES
 #include "globals/global_types.h"
 #include "globals/global_defs.h"
-#include "globals/utils.h"
-
-#include "bp_perceptron.h"
-#include "bp.param.h"
-#include "bp/bp_perceptron.h"
-#include "globals/assert.h"
 #include "globals/global_vars.h"
-#include "op.h"
+#include "globals/utils.h"
+#include "globals/assert.h"
 
-/***************************************************************************
- * External Parameters (defined in bp.param.def or PARAMS.in)
- *
- * These are now defined in bp.param.def:
- *   PERCEPTRON_HIST_LEN  - History length (default: 28 for 4KB budget)
- *   PERCEPTRON_TABLE_BITS - log2(number of perceptrons) (default: 7)
- *   BP_PERCEPTRON_ON - Enable/disable flag
- ***************************************************************************/
+#include "bp/bp_perceptron.h"
+#include "bp.param.h"
+#include "op.h"
 
 /***************************************************************************
  * Global State
@@ -49,10 +37,10 @@
 static Bp_Perceptron bp_perceptron;
 
 /* Statistics counters */
-static unsigned long long stat_predictions;
-static unsigned long long stat_mispredictions;
-static unsigned long long stat_updates;
-static unsigned long long stat_threshold_updates;  /* Updates even when prediction correct */
+static Counter stat_predictions;
+static Counter stat_mispredictions;
+static Counter stat_updates;
+static Counter stat_threshold_updates;  /* Updates even when prediction correct */
 
 /***************************************************************************
  * Helper Functions
@@ -60,8 +48,8 @@ static unsigned long long stat_threshold_updates;  /* Updates even when predicti
 
 /* Calculate threshold from history length: theta = floor(1.93*h + 14)
  * This relationship was empirically derived in the paper */
-static inline int32_t calculate_threshold(uns32 hist_len) {
-    return (int32_t)(1.93 * (double)hist_len + 14.0);
+static inline int32 calculate_threshold(uns32 hist_len) {
+    return (int32)(1.93 * (double)hist_len + 14.0);
 }
 
 /* Compute table index from PC using simple hash */
@@ -71,12 +59,19 @@ static inline uns32 compute_index(uns64 pc) {
 }
 
 /* Convert binary history bit to bipolar value: 0 -> -1, 1 -> +1 */
-static inline int8_t to_bipolar(uns8 bit) {
+static inline int8 to_bipolar(uns8 bit) {
     return bit ? 1 : -1;
 }
 
+/* Saturate weight to 8-bit signed range */
+static inline Perceptron_Weight saturate_weight(int32 val) {
+    if (val > PERCEPTRON_WEIGHT_MAX) return PERCEPTRON_WEIGHT_MAX;
+    if (val < PERCEPTRON_WEIGHT_MIN) return PERCEPTRON_WEIGHT_MIN;
+    return (Perceptron_Weight)val;
+}
+
 /***************************************************************************
- * Initialization and Cleanup
+ * Initialization
  ***************************************************************************/
 
 void bp_perceptron_init(void) {
@@ -89,13 +84,13 @@ void bp_perceptron_init(void) {
     bp_perceptron.ghist       = 0;
     
     /* Validate configuration */
-    assert(bp_perceptron.hist_len <= PERCEPTRON_MAX_HIST_LEN);
-    assert(bp_perceptron.num_entries > 0);
+    ASSERT(0, bp_perceptron.hist_len <= PERCEPTRON_MAX_HIST_LEN);
+    ASSERT(0, bp_perceptron.num_entries > 0);
     
     /* Allocate perceptron table */
     bp_perceptron.table = (Perceptron*)calloc(bp_perceptron.num_entries, 
                                                sizeof(Perceptron));
-    assert(bp_perceptron.table != NULL);
+    ASSERT(0, bp_perceptron.table != NULL);
     
     /* Initialize all weights to 0 (unbiased starting point) */
     for (i = 0; i < bp_perceptron.num_entries; i++) {
@@ -115,30 +110,22 @@ void bp_perceptron_init(void) {
     printf("  History length:    %u\n", bp_perceptron.hist_len);
     printf("  Table entries:     %u\n", bp_perceptron.num_entries);
     printf("  Threshold:         %d\n", bp_perceptron.threshold);
-    printf("  Bits per weight:   %lu\n", sizeof(Weight) * 8);
     
     /* Calculate hardware budget (for comparison with paper) */
-    uns32 bytes_per_perceptron = (bp_perceptron.hist_len + 1) * sizeof(Weight);
+    uns32 bytes_per_perceptron = (bp_perceptron.hist_len + 1) * sizeof(Perceptron_Weight);
     uns32 total_bytes = bp_perceptron.num_entries * bytes_per_perceptron;
     printf("  Hardware budget:   %u bytes (%.2f KB)\n", 
            total_bytes, total_bytes / 1024.0);
 }
 
-void bp_perceptron_cleanup(void) {
-    if (bp_perceptron.table) {
-        free(bp_perceptron.table);
-        bp_perceptron.table = NULL;
-    }
-}
-
 /***************************************************************************
- * Prediction
+ * Core Prediction Logic
  ***************************************************************************/
 
-uns8 bp_perceptron_pred(uns64 pc, Perceptron_State* state) {
+static uns8 bp_perceptron_predict(uns64 pc, int32* y_out, uns64* saved_ghist, uns32* saved_index) {
     uns32 index;
     Perceptron* p;
-    int32_t y;
+    int32 y;
     uns32 i;
     uns64 hist;
     
@@ -150,26 +137,20 @@ uns8 bp_perceptron_pred(uns64 pc, Perceptron_State* state) {
      * 
      * w0 is the bias weight (always has input 1)
      * xi is the i-th bit of global history, converted to bipolar (-1/+1)
-     * 
-     * Since xi can only be -1 or +1, we can optimize:
-     *   xi * wi = wi if history bit is 1 (taken)
-     *   xi * wi = -wi if history bit is 0 (not-taken)
      */
     y = p->weights[0];  /* Start with bias weight */
     hist = bp_perceptron.ghist;
     
     for (i = 1; i <= bp_perceptron.hist_len; i++) {
-        int8_t xi = to_bipolar(hist & 1);
+        int8 xi = to_bipolar(hist & 1);
         y += xi * p->weights[i];
         hist >>= 1;
     }
     
     /* Save state for update */
-    if (state) {
-        state->y_out = y;
-        state->ghist = bp_perceptron.ghist;
-        state->index = index;
-    }
+    *y_out = y;
+    *saved_ghist = bp_perceptron.ghist;
+    *saved_index = index;
     
     stat_predictions++;
     
@@ -178,23 +159,23 @@ uns8 bp_perceptron_pred(uns64 pc, Perceptron_State* state) {
 }
 
 /***************************************************************************
- * Update (Training)
+ * Core Update Logic
  ***************************************************************************/
 
-void bp_perceptron_update(uns64 pc, uns8 taken, Perceptron_State* state) {
+static void bp_perceptron_train(uns8 taken, int32 y_out, uns64 saved_ghist, uns32 saved_index) {
     Perceptron* p;
-    int8_t t;          /* Actual outcome as bipolar: +1 (taken) or -1 (not-taken) */
-    int8_t predicted;  /* Prediction as bipolar */
+    int8 t;          /* Actual outcome as bipolar: +1 (taken) or -1 (not-taken) */
+    int8 predicted;  /* Prediction as bipolar */
     uns32 i;
     uns64 hist;
     Flag do_update;
     
     /* Get the perceptron we used for prediction */
-    p = &bp_perceptron.table[state->index];
+    p = &bp_perceptron.table[saved_index];
     
     /* Convert outcome and prediction to bipolar */
     t = taken ? 1 : -1;
-    predicted = (state->y_out >= 0) ? 1 : -1;
+    predicted = (y_out >= 0) ? 1 : -1;
     
     /* Check for misprediction */
     if (predicted != t) {
@@ -206,26 +187,17 @@ void bp_perceptron_update(uns64 pc, uns8 taken, Perceptron_State* state) {
      * 
      * The threshold condition ensures we keep training even on correct
      * predictions until we're confident (helps with convergence) */
-    do_update = (predicted != t) || (abs(state->y_out) <= bp_perceptron.threshold);
+    do_update = (predicted != t) || (abs(y_out) <= bp_perceptron.threshold);
     
     if (do_update) {
         /* Update bias weight: w0 = w0 + t */
-        p->weights[0] += t;
-        
-        /* Clamp to prevent overflow (weights are 8-bit signed) */
-        if (p->weights[0] > 127)  p->weights[0] = 127;
-        if (p->weights[0] < -128) p->weights[0] = -128;
+        p->weights[0] = saturate_weight(p->weights[0] + t);
         
         /* Update history weights: wi = wi + t * xi */
-        hist = state->ghist;
+        hist = saved_ghist;
         for (i = 1; i <= bp_perceptron.hist_len; i++) {
-            int8_t xi = to_bipolar(hist & 1);
-            p->weights[i] += t * xi;
-            
-            /* Clamp weights */
-            if (p->weights[i] > 127)  p->weights[i] = 127;
-            if (p->weights[i] < -128) p->weights[i] = -128;
-            
+            int8 xi = to_bipolar(hist & 1);
+            p->weights[i] = saturate_weight(p->weights[i] + t * xi);
             hist >>= 1;
         }
         
@@ -242,86 +214,68 @@ void bp_perceptron_update(uns64 pc, uns8 taken, Perceptron_State* state) {
  * Global History Management
  ***************************************************************************/
 
-void bp_perceptron_shift_ghist(uns8 taken) {
+static void bp_perceptron_shift_ghist(uns8 taken) {
     /* Shift history left and insert new outcome at LSB */
     bp_perceptron.ghist = (bp_perceptron.ghist << 1) | (taken ? 1 : 0);
 }
 
-void bp_perceptron_recover(uns64 ghist) {
+static void bp_perceptron_restore_ghist(uns64 ghist) {
     bp_perceptron.ghist = ghist;
 }
 
-uns64 bp_perceptron_get_ghist(void) {
-    return bp_perceptron.ghist;
-}
-
 /***************************************************************************
- * Statistics
+ * Scarab Interface Functions
  ***************************************************************************/
 
-void bp_perceptron_print_stats(void) {
-    double mispred_rate;
-
-    if (stat_predictions > 0) {
-        mispred_rate = 100.0 * (double)stat_mispredictions / (double)stat_predictions;
-    } else {
-        mispred_rate = 0.0;
-    }
-
-    printf("\n=== Perceptron Branch Predictor Statistics ===\n");
-    printf("Predictions:           %llu\n", stat_predictions);
-    printf("Mispredictions:        %llu\n", stat_mispredictions);
-    printf("Misprediction rate:    %.4f%%\n", mispred_rate);
-    printf("Total updates:         %llu\n", stat_updates);
-    printf("Threshold updates:     %llu (correct but low confidence)\n",
-           stat_threshold_updates);
-    printf("Configuration:\n");
-    printf("  History length:      %u\n", bp_perceptron.hist_len);
-    printf("  Table entries:       %u\n", bp_perceptron.num_entries);
-    printf("  Threshold:           %d\n", bp_perceptron.threshold);
-    printf("================================================\n");
-}
-
-/***************************************************************************
- * Scarab Interface Wrappers
- *
- * These functions adapt our perceptron implementation to Scarab's
- * branch predictor interface.
- ***************************************************************************/
-
-/* Timestamp function (called before prediction) - not used in basic perceptron */
+/* Timestamp function (called before prediction) */
 void bp_perceptron_timestamp(Op* op) {
     /* Perceptron doesn't need timestamping */
+    (void)op;
 }
 
 /* Prediction function - Scarab interface */
-uns8 bp_perceptron_pred_op(Op* op) {
-    return bp_perceptron_pred(op->inst_info->addr, &op->perceptron_state);
+void bp_perceptron_pred_op(Op* op) {
+    uns8 pred = bp_perceptron_predict(
+        op->inst_info->addr,
+        &op->bp_perceptron_y_out,
+        &op->bp_perceptron_ghist,
+        &op->bp_perceptron_index
+    );
+    
+    /* Store prediction in op */
+    op->oracle_info.pred = pred ? TAKEN : NOT_TAKEN;
 }
 
-/* Speculative update (called in front-end) - shift history */
+/* Speculative update (called after prediction in front-end) */
 void bp_perceptron_spec_update(Op* op) {
     /* Shift global history with predicted direction */
-    bp_perceptron_shift_ghist(op->oracle_info.pred);
+    bp_perceptron_shift_ghist(op->oracle_info.pred == TAKEN);
 }
 
-/* Update function (called when branch resolves) - Scarab interface */
+/* Update function (called when branch resolves) */
 void bp_perceptron_update_op(Op* op) {
     uns8 taken = (op->oracle_info.dir == TAKEN);
-    bp_perceptron_update(op->inst_info->addr, taken, &op->perceptron_state);
+    bp_perceptron_train(
+        taken,
+        op->bp_perceptron_y_out,
+        op->bp_perceptron_ghist,
+        op->bp_perceptron_index
+    );
 }
 
-/* Retire function (called at retirement) - not used in basic perceptron */
+/* Retire function (called at retirement) */
 void bp_perceptron_retire(Op* op) {
     /* Perceptron updates at resolution, nothing needed at retire */
+    (void)op;
 }
 
-/* Recover function (called on misprediction) - Scarab interface */
+/* Recover function (called on misprediction recovery) */
 void bp_perceptron_recover_op(Recovery_Info* info) {
-    bp_perceptron_recover(info->pred_global_hist);
+    /* Restore global history from recovery info */
+    bp_perceptron_restore_ghist(info->pred_global_hist);
 }
 
-/* Full function (check if predictor is full) - always return FALSE */
-uns8 bp_perceptron_full(uns proc_id) {
+/* Full function (check if predictor resources are full) */
+uns8 bp_perceptron_full(void) {
     return FALSE;  /* Perceptron never stalls */
 }
