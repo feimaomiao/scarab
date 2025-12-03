@@ -36,7 +36,9 @@
 #include "inst_info.h"
 #include "op_info.h"
 #include "table_info.h"
-#include "bp/bp_perceptron.h"
+
+struct Perceptron_State_struct;
+typedef struct Perceptron_State_struct Perceptron_State;
 
 // forward declaration of FT
 typedef struct FT FT;

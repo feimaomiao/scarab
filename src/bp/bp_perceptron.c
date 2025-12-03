@@ -28,6 +28,10 @@
 
 #include "bp_perceptron.h"
 #include "bp.param.h"
+#include "bp/bp_perceptron.h"
+#include "globals/assert.h"
+#include "globals/global_vars.h"
+#include "op.h"
 
 /***************************************************************************
  * External Parameters (defined in bp.param.def or PARAMS.in)
