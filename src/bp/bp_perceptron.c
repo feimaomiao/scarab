@@ -93,16 +93,9 @@ void bp_perceptron_init(void) {
     stat_updates = 0;
     stat_threshold_updates = 0;
     
-    /* Print configuration */
-    printf("Perceptron BP initialized:\n");
-    printf("  History length:    %u\n", bp_perceptron.hist_len);
-    printf("  Table entries:     %u\n", bp_perceptron.num_entries);
-    printf("  Threshold:         %d\n", bp_perceptron.threshold);
     
     uns32 bytes_per_entry = (bp_perceptron.hist_len + 1) * sizeof(Bp_Perceptron_Weight);
     uns32 total_bytes = bp_perceptron.num_entries * bytes_per_entry;
-    printf("  Hardware budget:   %u bytes (%.2f KB)\n", 
-           total_bytes, total_bytes / 1024.0);
 }
 
 /***************************************************************************
