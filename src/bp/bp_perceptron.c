@@ -96,6 +96,8 @@ void bp_perceptron_init(void) {
     
     uns32 bytes_per_entry = (bp_perceptron.hist_len + 1) * sizeof(Bp_Perceptron_Weight);
     uns32 total_bytes = bp_perceptron.num_entries * bytes_per_entry;
+    printf("  Hardware budget:   %u bytes (%.2f KB)\n", total_bytes, total_bytes / 1024.0);
+}
 }
 
 /***************************************************************************
